@@ -58,18 +58,14 @@ impl App {
 pub fn run(config: Config) -> Result<(), &'static str> {
     let app = App::new();
 
-    let pattern_to_run: Option<&Box<dyn DesignPattern>>;
+    let pattern_to_run = if config.run_puzzle{
+        app.puzzles.get(&config.name).ok_or("Puzzle not found")?
+    } else{
+        app.patterns.get(&config.name).ok_or("Pattern not found")?
+    };
 
-    if config.run_puzzle {
-        pattern_to_run = app.puzzles.get(&config.name);
-    } else {
-        pattern_to_run = app.patterns.get(&config.name);
-    }
+    pattern_to_run.run();
+    
+    Ok(())
 
-    if let Some(pattern) = pattern_to_run {
-        pattern.run();
-        return Ok(());
-    }
-
-    Err("Pattern not found")
 }
