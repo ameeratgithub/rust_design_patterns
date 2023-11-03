@@ -1,7 +1,7 @@
 #![allow(unused_variables, dead_code)]
 
-use std::cell::RefCell;
 use std::rc::Rc;
+use std::{cell::RefCell, rc::Weak};
 
 trait Subject {
     fn add_observer(&mut self, o: Rc<RefCell<dyn Observer>>);
@@ -11,24 +11,33 @@ trait Subject {
 
 struct WeatherData {
     observers: Vec<Rc<RefCell<dyn Observer>>>,
-    temperature: f32,
-    humidity: f32,
-    pressure: f32,
+    temperature: RefCell<f32>,
+    humidity: RefCell<f32>,
+    pressure: RefCell<f32>,
 }
 
 impl WeatherData {
     fn new() -> Self {
         Self {
             observers: vec![],
-            temperature: 0.0,
-            humidity: 0.0,
-            pressure: 0.0,
+            temperature: 0.0.into(),
+            humidity: 0.0.into(),
+            pressure: 0.0.into(),
         }
     }
-    fn set_measurements(&mut self, temperature: f32, humidity: f32, pressure: f32) {
-        self.temperature = temperature;
-        self.humidity = humidity;
-        self.pressure = pressure;
+    fn get_temprature(&self) -> f32 {
+        *self.temperature.borrow()
+    }
+    fn get_humidity(&self) -> f32 {
+        *self.humidity.borrow()
+    }
+    fn get_pressure(&self) -> f32 {
+        *self.pressure.borrow()
+    }
+    fn set_measurements(&self, temperature: f32, humidity: f32, pressure: f32) {
+        *self.temperature.borrow_mut() = temperature;
+        *self.humidity.borrow_mut() = humidity;
+        *self.pressure.borrow_mut() = pressure;
         self.measurements_changed();
     }
     fn measurements_changed(&self) {
@@ -47,15 +56,13 @@ impl Subject for WeatherData {
 
     fn notify_observers(&self) {
         for observer in self.observers.iter() {
-            observer
-                .borrow_mut()
-                .update(self.temperature, self.humidity, self.pressure);
+            observer.borrow_mut().update();
         }
     }
 }
 
 trait Observer {
-    fn update(&mut self, temperature: f32, humidity: f32, pressure: f32);
+    fn update(&mut self);
 }
 
 trait DisplayElement {
@@ -65,14 +72,20 @@ trait DisplayElement {
 struct CurrentConditionsDisplay {
     temperature: f32,
     humidity: f32,
-    weather_data: Rc<RefCell<WeatherData>>,
+    weather_data: Weak<RefCell<WeatherData>>,
 }
 
 impl Observer for CurrentConditionsDisplay {
-    fn update(&mut self, temperature: f32, humidity: f32, pressure: f32) {
-        self.temperature = temperature;
-        self.humidity = humidity;
+    fn update(&mut self) {
+
+        if let Some(weather_data) = self.weather_data.upgrade() {
+            let weather_data = weather_data.borrow();
+            self.temperature = weather_data.get_temprature();
+            self.humidity = weather_data.get_humidity();
+        }
+
         self.display();
+        
     }
 }
 
@@ -86,16 +99,77 @@ impl DisplayElement for CurrentConditionsDisplay {
 }
 
 impl CurrentConditionsDisplay {
-    fn new(weather_data: Rc<RefCell<WeatherData>>) -> Rc<RefCell<Self>> {
+    fn new(weather_data: Weak<RefCell<WeatherData>>) -> Rc<RefCell<Self>> {
+
+        let weather_data_clone = weather_data.clone();
+
         let observer = Rc::new(RefCell::new(Self {
             temperature: 0.0,
             humidity: 0.0,
+            weather_data,
+        }));
+
+    
+        if let Some(w) = weather_data_clone.upgrade(){
+            w.borrow_mut().add_observer(observer.clone());
+        }
+
+        observer
+    }
+}
+
+struct HeatIndexDisplay {
+    temperature: RefCell<f32>,
+    humidity: RefCell<f32>,
+    weather_data: Rc<RefCell<WeatherData>>,
+}
+
+impl DisplayElement for HeatIndexDisplay {
+    fn display(&self) {
+        println!(
+            "Heat Index is {}",
+            self.compute_head_index(*self.temperature.borrow(), *self.humidity.borrow())
+        );
+    }
+}
+
+impl HeatIndexDisplay {
+    fn new(weather_data: Rc<RefCell<WeatherData>>) -> Rc<RefCell<Self>> {
+        let observer = Rc::new(RefCell::new(Self {
+            temperature: 0.0.into(),
+            humidity: 0.0.into(),
             weather_data: Rc::clone(&weather_data),
         }));
 
         weather_data.borrow_mut().add_observer(observer.clone());
 
         observer
+    }
+
+    fn compute_head_index(&self, t: f32, rh: f32) -> f32 {
+        let index = 16.923 + (0.185212 * t) + (5.37941 * rh) - (0.100254 * t * rh)
+            + (0.00941695 * (t * t))
+            + (0.00728898 * (rh * rh))
+            + (0.000345372 * (t * t * rh))
+            - (0.000814971 * (t * rh * rh))
+            + (0.0000102102 * (t * t * rh * rh))
+            - (0.000038646 * (t * t * t))
+            + (0.0000291583 * (rh * rh * rh))
+            + (0.00000142721 * (t * t * t * rh))
+            + (0.000000197483 * (t * rh * rh * rh))
+            - (0.0000000218429 * (t * t * t * rh * rh))
+            + 0.000000000843296 * (t * t * rh * rh * rh)
+            - 0.0000000000481975 * (t * t * t * rh * rh * rh);
+
+        index
+    }
+}
+
+impl Observer for HeatIndexDisplay {
+    fn update(&mut self) {
+        self.temperature = self.weather_data.borrow().get_temprature().into();
+        self.humidity = self.weather_data.borrow().get_humidity().into();
+        self.display();
     }
 }
 
@@ -112,13 +186,18 @@ impl DesignPatternFactory for ObserverPattern {
 impl DesignPattern for ObserverPattern {
     fn run(&self) {
         let weather_data = Rc::new(RefCell::new(WeatherData::new()));
+        
+        CurrentConditionsDisplay::new(Rc::downgrade(&weather_data));
+        HeatIndexDisplay::new(Rc::clone(&weather_data));
+        
+        weather_data.borrow().set_measurements(80.0, 65.0, 30.4);
+        println!("\n");
 
-        let current_conditions_display = CurrentConditionsDisplay::new(Rc::clone(&weather_data));
-
-        let mut mut_weather_data = weather_data.borrow_mut();
-
-        mut_weather_data.set_measurements(80.0, 65.0, 30.4);
-        mut_weather_data.set_measurements(82.0, 70.0, 29.2);
-        mut_weather_data.set_measurements(78.0, 90.0, 29.2);
+        weather_data.borrow().set_measurements(82.0, 70.0, 29.2);
+        println!("\n");
+        
+        weather_data.borrow().set_measurements(78.0, 90.0, 29.2);
+        println!("\n");
     }
 }
+
