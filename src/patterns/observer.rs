@@ -77,7 +77,6 @@ struct CurrentConditionsDisplay {
 
 impl Observer for CurrentConditionsDisplay {
     fn update(&mut self) {
-
         if let Some(weather_data) = self.weather_data.upgrade() {
             let weather_data = weather_data.borrow();
             self.temperature = weather_data.get_temprature();
@@ -85,7 +84,6 @@ impl Observer for CurrentConditionsDisplay {
         }
 
         self.display();
-        
     }
 }
 
@@ -100,7 +98,6 @@ impl DisplayElement for CurrentConditionsDisplay {
 
 impl CurrentConditionsDisplay {
     fn new(weather_data: Weak<RefCell<WeatherData>>) -> Rc<RefCell<Self>> {
-
         let weather_data_clone = weather_data.clone();
 
         let observer = Rc::new(RefCell::new(Self {
@@ -109,8 +106,7 @@ impl CurrentConditionsDisplay {
             weather_data,
         }));
 
-    
-        if let Some(w) = weather_data_clone.upgrade(){
+        if let Some(w) = weather_data_clone.upgrade() {
             w.borrow_mut().add_observer(observer.clone());
         }
 
@@ -173,6 +169,49 @@ impl Observer for HeatIndexDisplay {
     }
 }
 
+struct ForecastDisplay {
+    current_pressure: RefCell<f32>,
+    last_pressure: RefCell<f32>,
+    weather_data: Rc<RefCell<WeatherData>>,
+}
+
+impl DisplayElement for ForecastDisplay {
+    fn display(&self) {
+        let last_pressure = *self.last_pressure.borrow();
+        let current_pressure = *self.current_pressure.borrow();
+
+        if last_pressure < current_pressure {
+            println!("Forecast: Improving weather on the way!");
+        } else if last_pressure > current_pressure {
+            println!("Forecast: Watch out for cooler, rainy weather");
+        }else{
+            println!("Forecast: More of the same");
+        }
+    }
+}
+
+impl ForecastDisplay {
+    fn new(weather_data: Rc<RefCell<WeatherData>>) -> Rc<RefCell<Self>> {
+        let observer = Rc::new(RefCell::new(Self {
+            last_pressure: 0.0.into(),
+            current_pressure: 0.0.into(),
+            weather_data: Rc::clone(&weather_data),
+        }));
+
+        weather_data.borrow_mut().add_observer(observer.clone());
+
+        observer
+    }
+}
+
+impl Observer for ForecastDisplay {
+    fn update(&mut self) {
+        *self.last_pressure.borrow_mut() = *self.current_pressure.borrow();
+        *self.current_pressure.borrow_mut() = self.weather_data.borrow().get_pressure();
+        self.display();
+    }
+}
+
 pub struct ObserverPattern;
 
 use crate::traits::{DesignPattern, DesignPatternFactory};
@@ -186,18 +225,18 @@ impl DesignPatternFactory for ObserverPattern {
 impl DesignPattern for ObserverPattern {
     fn run(&self) {
         let weather_data = Rc::new(RefCell::new(WeatherData::new()));
-        
+
         CurrentConditionsDisplay::new(Rc::downgrade(&weather_data));
         HeatIndexDisplay::new(Rc::clone(&weather_data));
-        
+        ForecastDisplay::new(Rc::clone(&weather_data));
+
         weather_data.borrow().set_measurements(80.0, 65.0, 30.4);
         println!("\n");
 
         weather_data.borrow().set_measurements(82.0, 70.0, 29.2);
         println!("\n");
-        
+
         weather_data.borrow().set_measurements(78.0, 90.0, 29.2);
         println!("\n");
     }
 }
-
